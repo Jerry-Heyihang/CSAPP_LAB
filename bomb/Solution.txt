@@ -1,0 +1,57 @@
+objdump -t bomb > symbol.txt // -t represents symbol table
+objdump -d bomb > disasm.txt // -d represents disassembly
+
+Solution:
+Border relations with Canada have never been better.
+1 2 4 8 16 32
+7 327
+7 0 DrEvil
+IONEFG
+4 3 2 1 6 5
+
+Phase_1:
+很明显phase 1比较了$eax和$esi, x/s $esi即可获得答案
+Border relations with Canada have never been better.
+
+Phase_2:
+首先在400f0a处比较，然后在400f1a处比较5次，即可得答案
+1 2 4 8 16 32
+
+Phase_3:
+首先打印0x4025cf, 得到"%d %d"
+随便输入两个数字测试,例如4 16
+跑到了400f6a 第一位7
+测试7 16
+跑到了400fbe 第二位327
+测试7 327通过
+
+Phase_4:
+首先打印0x4025cf, 得到"%d %d"
+随便输入两个数字测试,例如4 16
+观察40102e 第一位小于等于14
+观察401051 第二位等于0
+测试 4 0 在func4
+此时 $edx = 14, $edi = 4, $esi = 0
+观察发现400fe2和400ff7发现$ecx需要等于$edi
+得到答案7 0
+
+Phase_5:
+观察40107a和40107f
+答案为6位字符串
+跑到了40245e
+发现输入的abcdef变成了aduier,与flyers比较
+调试一下发现跑到了40108b
+发现输入的abcdef与0xf and 以后放到了$rdx
+且提取了$rdx + 0x4024b0的字符
+0x4024b0 "maduiersnfotvbylSo you think you can stop the bomb with ctrl-c, do you?"
+想得到flyers需要后四位为9 F E 5 6 7
+例如IONEFG
+
+Phase_6:
+参考了https://earthaa.github.io/2020/01/12/CSAPP-Bomblab/
+答案为4 3 2 1 6 5
+
+搜攻略的时候发现还有一个secret phase
+https://wdxtub.com/csapp/thick-csapp-lab-2/2016/04/16/
+不过这里要检查0x404622
+最后答案是20
