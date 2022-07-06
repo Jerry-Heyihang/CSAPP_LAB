@@ -1,6 +1,3 @@
-objdump -t bomb > symbol.txt // -t represents symbol table
-objdump -d bomb > disasm.txt // -d represents disassembly
-
 Solution:
 Border relations with Canada have never been better.
 1 2 4 8 16 32
@@ -8,6 +5,9 @@ Border relations with Canada have never been better.
 7 0 DrEvil
 IONEFG
 4 3 2 1 6 5
+
+objdump -t bomb > symbol.txt // -t represents symbol table
+objdump -d bomb > disasm.txt // -d represents disassembly
 
 Phase_1:
 很明显phase 1比较了$eax和$esi, x/s $esi即可获得答案
