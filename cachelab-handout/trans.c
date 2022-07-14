@@ -10,6 +10,8 @@
 #include <stdio.h>
 #include "cachelab.h"
 
+#define min(x, y) ((x < y) ? (x) : (y))
+
 int is_transpose(int M, int N, int A[N][M], int B[M][N]);
 
 /* 
@@ -22,6 +24,73 @@ int is_transpose(int M, int N, int A[N][M], int B[M][N]);
 char transpose_submit_desc[] = "Transpose submission";
 void transpose_submit(int M, int N, int A[N][M], int B[M][N])
 {
+    if (M == 32) {
+        int i, j, k, l;
+        int temp[8];
+
+        for (i = 0; i < N; i += 8) {
+            for (j = 0; j < M; j += 8) {
+                for (k = 0; k < 8; k++) {
+                    for (l = 0; l < 8; l++) {
+                        temp[l] = A[i + k][j + l];
+                    }
+                    for (l = 0; l < 8; l++) {
+                        B[j + l][i + k] = temp[l];
+                    }
+                }
+            }
+        }
+    } else if (M == 64) {
+        int i, j, k, l, m; // n;
+        int temp[8];
+        for (i = 0; i < N; i += 8) {
+            for (j = 0; j < M; j += 8) {
+                for (k = i; k < i + 4; k++) {
+                    for (l = 0; l < 8; l++) {
+                        temp[l] = A[k][j + l];
+                    }
+                    for (l = 0; l < 4; l++) {
+                        B[j + l][k] = temp[l];
+                    }       
+                    for (l = 0; l < 4; l++) {
+                        B[j + l][k + 4] = temp[7 - l];
+                    }
+                }
+                for (l = 0; l < 4; l++) {
+                    for (m = 0; m < 4; m++) {
+                        temp[m] = A[i + m + 4][j + 3 - l];
+                    }
+                    for (m = 0; m < 4; m++) {
+                        temp[m + 4] = A[i + m + 4][j + l + 4];
+                    }
+                    for (m = 0; m < 4; m++) {
+                        B[j + l + 4][i + m] = B[j + 3 - l][i + m + 4];
+                        B[j + l + 4][i + m + 4] = temp[m + 4];
+                    }
+                    for (m = 0; m < 4; m++) {
+                        B[j + 3 - l][i + m + 4] = temp[m];
+                    }
+                }   
+            }
+        }
+    } else if (M == 61) {
+        int i, j, k, l;
+        for (i = 0; i < N; i += 17)
+        {
+            for (j = 0; j < M; j += 4)
+            {
+                for (k = i; k < min(i + 17, N); k++)
+                {
+                    for (l = j; l < min(j + 4, M); l++)
+                    {
+                        B[l][k] = A[k][l];
+                    }
+                }
+            }
+        }
+    }
+
+    return;
 }
 
 /* 
@@ -43,7 +112,7 @@ void trans(int M, int N, int A[N][M], int B[M][N])
             B[j][i] = tmp;
         }
     }    
-
+    return;
 }
 
 /*
