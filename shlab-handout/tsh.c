@@ -51,10 +51,15 @@ struct job_t {              /* The job struct */
 struct job_t jobs[MAXJOBS]; /* The job list */
 /* End global variables */
 
-// Wrapper functions
+// Wrapper fucntions
 pid_t Fork(void);
 void Execve(const char *filename, char *const argv[], char *const envp[]);
-
+void Kill(pid_t pid, int signum);
+void Sigemptyset(sigset_t *set);
+void Sigaddset(sigset_t *set, int signum);
+void Sigfillset(sigset_t *set);
+void Setpgid(pid_t pid, pid_t pgid);
+void Sigprocmask(int how, sigset_t *set, sigset_t *oldset);
 /* Function prototypes */
 
 /* Here are the functions that you will implement */
@@ -172,22 +177,32 @@ void eval(char *cmdline)
     char buf[MAXLINE];
     int bg;
     pid_t pid;
+    sigset_t all, one, prev;
 
     strcpy(buf, cmdline);
     bg = parseline(buf, argv);
-    if (argv[0] == NULL) {
+    if (argv[0] == NULL)  {
         return;
     }
 
     if (!builtin_cmd(argv)) {
-        if ((pid = fork()) == 0) {
+        Sigfillset(&all);
+        Sigemptyset(&one);
+        Sigaddset(&prev, SIGCHLD);
+
+        Sigprocmask(SIG_BLOCK, &one, &prev); /* Block SIGCHLD */
+        if ((pid = Fork()) == 0) {
+            Sigprocmask(SIG_SETMASK, &one, NULL); /* Unblock SIGCHLD */
+            Setpgid(0, 0);
             Execve(argv[0], argv, environ);
         }
+
+        Sigprocmask(SIG_BLOCK, &all, NULL); /* Block SIGCHLD */
+        int st = (bg==0) ? FG : BG;
+        addjob(jobs,pid,st,cmdline);
+        Sigprocmask(SIG_SETMASK, &prev, NULL); /* Unblock SIGCHLD */
         if (!bg) {
-            int status;
-            if (waitpid(pid, &status, 0) < 0) {
-                unix_error("waitpid error");
-            }
+            waitfg(pid);
         } else {
             printf("[%d] (%d) %s", pid2jid(pid),pid, cmdline);
         }
@@ -279,6 +294,40 @@ int builtin_cmd(char **argv)
  */
 void do_bgfg(char **argv) 
 {
+    if(!argv[1]) {
+        printf("%s command requires PID or %%jobid argument\n", argv[0]);
+        return;
+    }
+
+    if (!isdigit(argv[1][0]) && argv[1][0] != '%') {
+        printf("%s: argument must be a PID or %%jobid\n", argv[0]);
+        return;
+    }
+
+    struct job_t* myjob;
+    if(argv[1][0] == '%') {
+        myjob = getjobjid(jobs,atoi(&argv[1][1]));
+        if(!myjob) {
+            printf("%s: No such job\n", argv[1]);
+            return;
+        }
+    } else {
+        myjob = getjobpid(jobs,atoi(argv[1]));
+        if (!myjob) {
+            printf("(%d): No such process\n", atoi(argv[1]));
+            return;
+        }
+    }
+
+    Kill(-myjob -> pid,SIGCONT);
+    if(!strcmp(argv[0], "bg")) {
+        myjob -> state = BG;
+        printf("[%d] (%d) %s",myjob -> jid, myjob -> pid, myjob -> cmdline);
+    } else {
+        myjob -> state = FG;
+        waitfg(myjob -> pid);
+    }
+
     return;
 }
 
@@ -287,6 +336,10 @@ void do_bgfg(char **argv)
  */
 void waitfg(pid_t pid)
 {
+    while(fgpid(jobs)) {
+        sleep(1);
+    }
+
     return;
 }
 
@@ -303,6 +356,31 @@ void waitfg(pid_t pid)
  */
 void sigchld_handler(int sig) 
 {
+    int olderrno = errno;
+    sigset_t mask_all,prev;
+    pid_t pid;
+    int status;
+    Sigfillset(&mask_all);
+    while((pid = waitpid(-1, &status,WNOHANG | WUNTRACED)) > 0) {
+    	if (WIFEXITED(status)) {
+    		Sigprocmask(SIG_BLOCK, &mask_all, &prev);
+    		deletejob(jobs, pid);
+    		Sigprocmask(SIG_SETMASK, &prev, NULL);
+    	} else if (WIFSIGNALED(status)) {
+    	    struct job_t* job = getjobpid(jobs, pid);
+            sigprocmask(SIG_BLOCK, &mask_all, &prev);
+            printf("Job [%d] (%d) terminated by signal %d\n", job -> jid, job -> pid, WTERMSIG(status));
+            deletejob(jobs, pid);
+            sigprocmask(SIG_SETMASK, &prev, NULL);
+    	} else {
+            struct job_t* job = getjobpid(jobs, pid);
+            sigprocmask(SIG_BLOCK, &mask_all, &prev);
+            printf("Job [%d] (%d) stopped by signal %d\n", job -> jid, job -> pid, WSTOPSIG(status));
+            job -> state= ST;
+            sigprocmask(SIG_SETMASK, &prev, NULL);
+        }
+    }
+    errno = olderrno;  
     return;
 }
 
@@ -313,6 +391,12 @@ void sigchld_handler(int sig)
  */
 void sigint_handler(int sig) 
 {
+    int olderrno = errno;
+    pid_t fg = fgpid(jobs);
+    if(fg) {
+        Kill(-fg, sig);
+    }
+    errno = olderrno;
     return;
 }
 
@@ -323,6 +407,12 @@ void sigint_handler(int sig)
  */
 void sigtstp_handler(int sig) 
 {
+    int olderrno = errno;
+    pid_t fg = fgpid(jobs);
+    if(fg) {
+        Kill(-fg, sig);
+    }
+    errno = olderrno;
     return;
 }
 
@@ -392,15 +482,16 @@ int deletejob(struct job_t *jobs, pid_t pid)
 {
     int i;
 
-    if (pid < 1)
-	return 0;
+    if (pid < 1) {
+        return 0;
+    }
 
     for (i = 0; i < MAXJOBS; i++) {
-	if (jobs[i].pid == pid) {
-	    clearjob(&jobs[i]);
-	    nextjid = maxjid(jobs)+1;
-	    return 1;
-	}
+        if (jobs[i].pid == pid) {
+            clearjob(&jobs[i]);
+            nextjid = maxjid(jobs)+1;
+            return 1;
+        }
     }
     return 0;
 }
@@ -561,4 +652,61 @@ void Execve(const char *filename, char *const argv[], char *const envp[])
     if (execve(filename, argv, envp) < 0) {
         unix_error("Execve error");
     }
+}
+
+void Kill(pid_t pid, int signum) 
+{
+    int kr;
+
+    if ((kr = kill(pid, signum)) < 0) {
+        unix_error("Kill error");
+    }
+
+    return;
+}
+
+void Sigemptyset(sigset_t *set)
+{
+    if(sigemptyset(set) < 0) {
+        unix_error("Sigemptyset error");
+    }
+
+    return;
+}
+
+void Sigaddset(sigset_t *set, int sign)
+{
+    if(sigaddset(set,sign)<0) {
+        unix_error("Sigaddset error");
+    }
+
+    return;
+}
+
+void Sigprocmask(int how, sigset_t *set, sigset_t *oldset)
+{
+    if(sigprocmask(how,set,oldset) < 0) {
+        unix_error("Sigprocmask error");
+    }
+
+    return;
+}
+
+void Sigfillset(sigset_t *set)
+{
+    if(sigfillset(set) < 0) {
+        unix_error("Sigfillset error");
+    }
+
+    return;
+}
+
+void Setpgid(pid_t pid, pid_t pgid) {
+    int rc;
+
+    if ((rc = setpgid(pid, pgid)) < 0) {
+        unix_error("Setpgid error");
+    }
+
+    return;
 }
